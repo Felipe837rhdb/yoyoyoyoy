@@ -1,0 +1,44 @@
+name: PC Gamer
+
+on:
+  workflow_dispatch:
+
+jobs:
+  criar-pc:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Login Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Criar PC
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            az group create \
+              --name GamingPC \
+              --location brazilsouth
+
+            az vm create \
+              --resource-group GamingPC \
+              --name GamingPC \
+              --image Win2022Datacenter \
+              --size Standard_NV6ads_A10_v5 \
+              --admin-username GamingUser \
+              --admin-password '${{ secrets.WINDOWS_PASSWORD }}' \
+              --storage-sku Premium_LRS \
+              --os-disk-size-gb 150 \
+              --public-ip-sku Standard \
+              --nsg-rule RDP
+
+            IP=$(az vm show \
+              --resource-group GamingPC \
+              --name GamingPC \
+              --show-details \
+              --query publicIps \
+              --output tsv)
+
+            echo "PC: $IP"
+            echo "Usuário: GamingUser"
