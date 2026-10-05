@@ -1,0 +1,113 @@
+name: PC FORTE
+
+on:
+  workflow_dispatch:
+
+jobs:
+  pc:
+    runs-on: windows-gpu
+    timeout-minutes: 3600
+
+    steps:
+      - name: Ver hardware
+        shell: powershell
+        run: |
+          Write-Host "===== CPU ====="
+          Get-CimInstance Win32_Processor |
+            Select-Object Name, NumberOfCores
+
+          Write-Host "===== RAM ====="
+          $ram = Get-CimInstance Win32_ComputerSystem
+          Write-Host "$([math]::Round($ram.TotalPhysicalMemory / 1GB,2)) GB"
+
+          Write-Host "===== GPU ====="
+          Get-CimInstance Win32_VideoController |
+            Select-Object Name, DriverVersion
+
+      - name: Ativar RDP
+        shell: powershell
+        run: |
+          Set-ItemProperty `
+            "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" `
+            -Name fDenyTSConnections `
+            -Value 0
+
+          Enable-NetFirewallRule `
+            -DisplayGroup "Remote Desktop"
+
+          Restart-Service TermService -Force
+
+      - name: Criar usuário
+        shell: powershell
+        run: |
+          $password = -join (
+            1..20 | ForEach-Object {
+              [char](Get-Random -Minimum 33 -Maximum 127)
+            }
+          )
+
+          $secure = ConvertTo-SecureString `
+            $password `
+            -AsPlainText `
+            -Force
+
+          New-LocalUser `
+            -Name "GamingPC" `
+            -Password $secure `
+            -AccountNeverExpires
+
+          Add-LocalGroupMember `
+            -Group "Administrators" `
+            -Member "GamingPC"
+
+          Add-LocalGroupMember `
+            -Group "Remote Desktop Users" `
+            -Member "GamingPC"
+
+          "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
+
+      - name: Instalar Tailscale
+        shell: powershell
+        run: |
+          winget install `
+            --id Tailscale.Tailscale `
+            --silent `
+            --accept-source-agreements `
+            --accept-package-agreements
+
+      - name: Conectar Tailscale
+        shell: powershell
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
+
+          & $ts up `
+            --authkey="$env:TAILSCALE_AUTH_KEY" `
+            --hostname="gaming-pc-$env:GITHUB_RUN_ID"
+
+          Start-Sleep 10
+
+          $ip = & $ts ip -4
+
+          "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
+
+      - name: Mostrar dados
+        shell: powershell
+        run: |
+          Write-Host ""
+          Write-Host "=============================="
+          Write-Host "       PC FORTE ONLINE"
+          Write-Host "=============================="
+          Write-Host "IP:       $env:TAILSCALE_IP"
+          Write-Host "Usuário:  GamingPC"
+          Write-Host "Senha:    $env:RDP_PASSWORD"
+          Write-Host "=============================="
+
+      - name: Manter ligado
+        shell: powershell
+        run: |
+          while ($true) {
+            Write-Host "PC ativo: $(Get-Date)"
+            Start-Sleep 300
+          }
