@@ -1,0 +1,107 @@
+name: PC Basico
+
+on:
+  workflow_dispatch:
+
+jobs:
+  pc:
+    runs-on: windows-latest
+    timeout-minutes: 3600
+
+    steps:
+      - name: Ativar RDP
+        shell: powershell
+        run: |
+          Set-ItemProperty `
+            -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" `
+            -Name "fDenyTSConnections" `
+            -Value 0 `
+            -Force
+
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          Restart-Service TermService -Force
+
+      - name: Criar usuário
+        shell: powershell
+        run: |
+          $chars = [char[]](
+            (65..90) +
+            (97..122) +
+            (48..57)
+          )
+
+          $password = -join (1..16 | ForEach-Object {
+            $chars | Get-Random
+          })
+
+          $secure = ConvertTo-SecureString `
+            $password `
+            -AsPlainText `
+            -Force
+
+          New-LocalUser `
+            -Name "PCUser" `
+            -Password $secure `
+            -AccountNeverExpires
+
+          Add-LocalGroupMember `
+            -Group "Remote Desktop Users" `
+            -Member "PCUser"
+
+          "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
+
+      - name: Instalar Tailscale
+        shell: powershell
+        run: |
+          $url = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $file = "$env:TEMP\tailscale.msi"
+
+          Invoke-WebRequest -Uri $url -OutFile $file
+
+          Start-Process msiexec.exe `
+            -ArgumentList "/i `"$file`" /quiet /norestart" `
+            -Wait
+
+          Remove-Item $file -Force
+
+      - name: Conectar Tailscale
+        shell: powershell
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
+
+          & $ts up `
+            --authkey="$env:TAILSCALE_AUTH_KEY" `
+            --hostname="basic-pc-$env:GITHUB_RUN_ID"
+
+          Start-Sleep -Seconds 10
+
+          $ip = & $ts ip -4
+
+          if (-not $ip) {
+            Write-Error "Não foi possível obter o IP."
+            exit 1
+          }
+
+          "TAILSCALE_IP=$ip" >> $env:GITHUB_ENV
+
+      - name: Informações do PC
+        shell: powershell
+        run: |
+          Write-Host ""
+          Write-Host "=============================="
+          Write-Host "          PC BASICO"
+          Write-Host "=============================="
+          Write-Host "IP:       $env:TAILSCALE_IP"
+          Write-Host "Usuário:  PCUser"
+          Write-Host "Senha:    $env:RDP_PASSWORD"
+          Write-Host "=============================="
+
+      - name: Manter PC ativo
+        shell: powershell
+        run: |
+          while ($true) {
+            Write-Host "PC ativo - $(Get-Date)"
+            Start-Sleep -Seconds 300
+          }
